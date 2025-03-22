@@ -1,4 +1,4 @@
-# mcp-server-odbc MCP server
+# mcp-server-odbc 
 
 A simple MCP ODBC server using FastAPI, ODBC and SQLAlchemy.
 Tested with Virtuoso DBMS and coudl work with any SQLAlchemy-compatible databases.
