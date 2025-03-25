@@ -54,7 +54,7 @@ A lightweight MCP (Model Context Protocol) ODBC server built with **FastAPI**, *
 
 Clone this repository:
 ```bash
-git clone https://github.com/OpenLinkSoftware/mcp-server-odbc.git
+git clone https://github.com/OpenLinkSoftware/mcp-sqlalchemy-server.git
 ```
 
 ---
@@ -68,7 +68,7 @@ Add the following to `claude_desktop_config.json`:
   "mcpServers": {
     "my_database": {
       "command": "uv",
-      "args": ["--directory", "/path/to/mcp-server-odbc", "run", "mcp-server-odbc"],
+      "args": ["--directory", "/path/to/mcp-sqlalchemy-server", "run", "mcp-sqlalchemy-server"],
       "env": {
         "DB_URL": "virtuoso+pyodbc://user:password@VOS"
       }
@@ -100,7 +100,7 @@ For easier debugging:
 
 2. Start the inspector:
    ```bash
-   npx @modelcontextprotocol/inspector uv --directory /path/to/mcp-server-odbc run mcp-server-odbc
+   npx @modelcontextprotocol/inspector uv --directory /path/to/mcp-sqlalchemy-server run mcp-sqlalchemy-server
    ```
 
 Access the provided URL to troubleshoot server interactions.

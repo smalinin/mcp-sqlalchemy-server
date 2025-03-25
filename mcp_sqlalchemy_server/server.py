@@ -47,7 +47,7 @@ def get_db_info():
 
 
 ### MCP ###
-mcp = FastMCP('mcp-odbc-server', transport=["stdio", "sse"])
+mcp = FastMCP('mcp-sqlalchemy-server', transport=["stdio", "sse"])
 
 @mcp.tool(
     name="get_schemas",
