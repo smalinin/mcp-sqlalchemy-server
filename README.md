@@ -2,7 +2,7 @@
 
 # MCP Server ODBC via SQLAlchemy
 
-A lightweight MCP (Model Context Protocol) ODBC server built with **FastAPI**, **pyodbc**, and **SQLAlchemy**. This server is compatible with Virtuoso DBMS and DBMS backends supported by SQLAlchemy.
+A lightweight MCP (Model Context Protocol) server for ODBC built with **FastAPI**, **pyodbc**, and **SQLAlchemy**. This server is compatible with Virtuoso DBMS and other DBMS backends that implement a SQLAlchemy provider.
 
 ---
 
