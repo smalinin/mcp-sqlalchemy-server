@@ -21,8 +21,12 @@ MAX_LONG_DATA = int(os.getenv("MAX_LONG_DATA",4096))
 
 ### Database ###
 
-def get_engine(readonly=True):
+def get_engine(readonly=True, dsn:Optional[str]=None, uid:Optional[str]=None, pwd:Optional[str]=None):
     connection_string = os.getenv('DB_URL')
+
+    if dsn is not None and uid is not None and pwd is not None:
+        connection_string = f"virtuoso+pyodbc://{uid}:{pwd}@{dsn}"
+
     if not connection_string:
         logging.error("DB_URL environment variable is not set.")
         raise ValueError("DB_URL environment variable is not set.")
@@ -53,7 +57,7 @@ mcp = FastMCP('mcp-sqlalchemy-server', transport=["stdio", "sse"])
     name="get_schemas",
     description="Retrieve and return a list of all schema names from the connected database."
 )
-def get_schemas() -> str:
+def get_schemas(dsn:Optional[str]=None, uid:Optional[str]=None, pwd:Optional[str]=None) -> str:
     """
     Retrieve and return a list of all schema names from the connected database.
 
@@ -61,7 +65,7 @@ def get_schemas() -> str:
         str: A list of schema names.
     """
     try:
-        engine = get_engine()
+        engine = get_engine(True, dsn, uid, pwd)
         inspector = inspect(engine)
 
         schemas = inspector.get_schema_names()
@@ -80,7 +84,7 @@ def get_schemas() -> str:
                 "If `schema` is None, returns tables for all schemas. "
                 "If `schema` is not None, returns tables for the specified schema."
 )
-def get_tables(Schema: Optional[str] = None) -> str:
+def get_tables(Schema: Optional[str] = None, dsn:Optional[str]=None, uid:Optional[str]=None, pwd:Optional[str]=None) -> str:
     """
     Retrieve and return a list containing information about tables in the format
     [{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}].
@@ -95,7 +99,7 @@ def get_tables(Schema: Optional[str] = None) -> str:
         str: A list containing information about tables in the specified format.
     """
     try:
-        engine = get_engine()
+        engine = get_engine(True, dsn, uid, pwd)
         inspector = inspect(engine)
 
         tables_info = []
@@ -129,7 +133,7 @@ def get_tables(Schema: Optional[str] = None) -> str:
     description="Retrieve and return a dictionary containing the definition of a table, including column names, data types, nullable,"
                 " autoincrement, primary key, and foreign keys."
 )
-def describe_table(Schema:str, table: str) -> str:
+def describe_table(Schema:str, table: str, dsn:Optional[str]=None, uid:Optional[str]=None, pwd:Optional[str]=None) -> str:
     """
     Retrieve and return a dictionary containing the definition of a table, including column names, data types, nullable, autoincrement, primary key, and foreign keys.
 
@@ -144,7 +148,7 @@ def describe_table(Schema:str, table: str) -> str:
         str: A dictionary containing the table definition, including column names, data types, nullable, autoincrement, primary key, and foreign keys.
     """
     try:
-        engine = get_engine()
+        engine = get_engine(True, dsn, uid, pwd)
         inspector = inspect(engine)
 
         table_definition = {}
@@ -204,7 +208,7 @@ def _get_table_info(inspector, Schema: str, table: str) -> Dict[str, Any]:
     description="Retrieve and return a list containing information about tables whose names contain the substring 'q' in the format "
                 "[{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}]."
 )
-def filter_table_names(q: str) -> str:
+def filter_table_names(q: str, dsn:Optional[str]=None, uid:Optional[str]=None, pwd:Optional[str]=None) -> str:
     """
     Retrieve and return a list containing information about tables whose names contain the substring 'q' in the format
     [{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}].
@@ -216,7 +220,7 @@ def filter_table_names(q: str) -> str:
         str: A list containing information about tables whose names contain the substring 'q'.
     """
     try:
-        engine = get_engine()
+        engine = get_engine(True, dsn, uid, pwd)
         inspector = inspect(engine)
 
         tables_info = []
@@ -241,7 +245,8 @@ def filter_table_names(q: str) -> str:
     name="execute_query",
     description="Execute a SQL query and return results in JSONL format."
 )
-def execute_query(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None) -> str:
+def execute_query(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None,
+                  dsn:Optional[str]=None, uid:Optional[str]=None, pwd:Optional[str]=None) -> str:
     """
     Execute a SQL query and return results in JSONL format.
 
@@ -254,7 +259,7 @@ def execute_query(query: str, max_rows: int = 100, params: Optional[Dict[str, An
         str: Results in JSONL format.
     """
     try:
-        engine = get_engine()
+        engine = get_engine(True, dsn, uid, pwd)
         with engine.connect() as connection:
             # Execute the query with parameters
             rs = connection.execute(text(query), params)
@@ -282,7 +287,8 @@ def execute_query(query: str, max_rows: int = 100, params: Optional[Dict[str, An
     name="execute_query_md",
     description="Execute a SQL query and return results in Markdown table format."
 )
-def execute_query_md(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None) -> str:
+def execute_query_md(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None, 
+                     dsn:Optional[str]=None, uid:Optional[str]=None, pwd:Optional[str]=None) -> str:
     """
     Execute a SQL query and return results in Markdown table format.
 
@@ -295,7 +301,7 @@ def execute_query_md(query: str, max_rows: int = 100, params: Optional[Dict[str,
         str: Results in Markdown table format.
     """
     try:
-        engine = get_engine()
+        engine = get_engine(True, dsn, uid, pwd)
         with engine.connect() as connection:
             # Execute the query with parameters
             rs = connection.execute(text(query), params)
