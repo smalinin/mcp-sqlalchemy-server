@@ -24,4 +24,4 @@ build-backend = "hatchling.build"
 virtuoso-sqlalchemy = { git = "https://github.com/OpenLinkSoftware/Virtuoso-SQLAlchemy.git" }
 
 [project.scripts]
-mcp-server-odbc = "mcp_sqlalchemy_server:main"
+mcp-sqlalchemy-server = "mcp_sqlalchemy_server:main"
