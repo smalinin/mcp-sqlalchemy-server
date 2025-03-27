@@ -1,6 +1,6 @@
 [project]
 name = "mcp-sqlalchemy-server"
-version = "0.2.0"
+version = "0.2.1"
 description = "A simple MCP ODBC server using FastAPI and ODBC"
 readme = "README.md"
 requires-python = ">=3.10"

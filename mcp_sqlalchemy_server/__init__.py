@@ -9,7 +9,12 @@ from .server import (
     filter_table_names,
     execute_query,
     execute_query_md,
-    mcp
+    mcp,
+    query_database,
+    spasql_query,
+    sparql_query,
+    virtuoso_support_ai,
+    sparql_func
 )
 
 # Optionally expose other important items at package level
@@ -20,6 +25,11 @@ __all__ = [
     "filter_table_names",
     "execute_query",
     "execute_query_md",
+    "query_database",
+    "spasql_query",
+    "sparql_query",
+    "virtuoso_support_ai",
+    "sparql_func"
 ]
 
 
