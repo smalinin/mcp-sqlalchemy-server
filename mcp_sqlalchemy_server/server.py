@@ -32,9 +32,7 @@ def get_engine(readonly=True, url:Optional[str]=None):
         logging.error("DB_URL environment variable is not set.")
         raise ValueError("DB_URL environment variable is not set.")
     
-    logging.info(f"DB_URL: {connection_string}")
-
-    # connection_string = "virtuoso+pyodbc://dba:dba@VOS"
+    # logging.info(f"DB_URL: {connection_string}")
     return create_engine(connection_string, isolation_level='AUTOCOMMIT', execution_options={'readonly': readonly})
 
 def get_db_info():
