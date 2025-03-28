@@ -31,6 +31,9 @@ def get_engine(readonly=True, url:Optional[str]=None):
     if not connection_string:
         logging.error("DB_URL environment variable is not set.")
         raise ValueError("DB_URL environment variable is not set.")
+    
+    logging.info(f"DB_URL: {connection_string}")
+
     # connection_string = "virtuoso+pyodbc://dba:dba@VOS"
     return create_engine(connection_string, isolation_level='AUTOCOMMIT', execution_options={'readonly': readonly})
 
@@ -448,18 +451,17 @@ def sparql_query(query: str, format:Optional[str]="json", timeout:Optional[int]=
         raise
 
 
-
 @mcp.tool(
     name="virtuoso_support_ai",
-    description="Execute a SPARQL query and return results in JSONL format."
+    description="Tool to use the Virtuoso AI support function"
 )
 def virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, url:Optional[str]=None) -> str:
     """
-    This procedure is a wrapper for the OpenAI API to provide Virtuoso support
+    Tool to use the Virtuoso AI support function
 
     Args:
-        prompt (str): The prompt.
-        api_key (str): optional.
+        prompt (str): AI prompt text (required).
+        api_key (str): API key for AI service (optional).
         url (Optional[str]=None): Optional url connection string.
 
     Returns:
