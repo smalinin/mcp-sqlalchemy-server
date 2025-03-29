@@ -3,33 +3,33 @@ import logging
 import os
 
 from .server import (
-    get_schemas,
-    get_tables,
-    describe_table,
-    filter_table_names,
-    execute_query,
-    execute_query_md,
+    podbc_get_schemas,
+    podbc_get_tables,
+    podbc_describe_table,
+    podbc_filter_table_names,
+    podbc_execute_query,
+    podbc_execute_query_md,
     mcp,
-    query_database,
-    spasql_query,
-    sparql_query,
-    virtuoso_support_ai,
-    sparql_func
+    podbc_query_database,
+    podbc_spasql_query,
+    podbc_sparql_query,
+    podbc_virtuoso_support_ai,
+    podbc_sparql_func
 )
 
 # Optionally expose other important items at package level
 __all__ = [
-    "get_schemas",
-    "get_tables",
-    "describe_table",
-    "filter_table_names",
-    "execute_query",
-    "execute_query_md",
-    "query_database",
-    "spasql_query",
-    "sparql_query",
-    "virtuoso_support_ai",
-    "sparql_func"
+    "podbc_get_schemas",
+    "podbc_get_tables",
+    "podbc_describe_table",
+    "podbc_filter_table_names",
+    "podbc_execute_query",
+    "podbc_execute_query_md",
+    "podbc_query_database",
+    "podbc_spasql_query",
+    "podbc_sparql_query",
+    "podbc_virtuoso_support_ai",
+    "podbc_sparql_func"
 ]
 
 

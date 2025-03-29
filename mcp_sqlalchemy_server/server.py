@@ -56,10 +56,10 @@ def get_db_info():
 mcp = FastMCP('mcp-sqlalchemy-server', transport=["stdio", "sse"])
 
 @mcp.tool(
-    name="get_schemas",
+    name="podbc_get_schemas",
     description="Retrieve and return a list of all schema names from the connected database."
 )
-def get_schemas(url:Optional[str]=None) -> str:
+def podbc_get_schemas(url:Optional[str]=None) -> str:
     """
     Retrieve and return a list of all schema names from the connected database.
 
@@ -83,13 +83,13 @@ def get_schemas(url:Optional[str]=None) -> str:
 
 
 @mcp.tool(
-    name="get_tables",
+    name="podbc_get_tables",
     description="Retrieve and return a list containing information about tables in the format "
                 "[{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}]. "
                 "If `schema` is None, returns tables for all schemas. "
                 "If `schema` is not None, returns tables for the specified schema."
 )
-def get_tables(Schema: Optional[str] = None, url:Optional[str]=None) -> str:
+def podbc_get_tables(Schema: Optional[str] = None, url:Optional[str]=None) -> str:
     """
     Retrieve and return a list containing information about tables in the format
     [{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}].
@@ -135,11 +135,11 @@ def get_tables(Schema: Optional[str] = None, url:Optional[str]=None) -> str:
         
 
 @mcp.tool(
-    name="describe_table",
+    name="podbc_describe_table",
     description="Retrieve and return a dictionary containing the definition of a table, including column names, data types, nullable,"
                 " autoincrement, primary key, and foreign keys."
 )
-def describe_table(Schema:str, table: str, url:Optional[str]=None) -> str:
+def podbc_describe_table(Schema:str, table: str, url:Optional[str]=None) -> str:
     """
     Retrieve and return a dictionary containing the definition of a table, including column names, data types, nullable, autoincrement, primary key, and foreign keys.
 
@@ -211,11 +211,11 @@ def _get_table_info(inspector, Schema: str, table: str) -> Dict[str, Any]:
         raise
 
 @mcp.tool(
-    name="filter_table_names",
+    name="podbc_filter_table_names",
     description="Retrieve and return a list containing information about tables whose names contain the substring 'q' in the format "
                 "[{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}]."
 )
-def filter_table_names(q: str, url:Optional[str]=None) -> str:
+def podbc_filter_table_names(q: str, url:Optional[str]=None) -> str:
     """
     Retrieve and return a list containing information about tables whose names contain the substring 'q' in the format
     [{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}].
@@ -250,10 +250,10 @@ def filter_table_names(q: str, url:Optional[str]=None) -> str:
 
 
 @mcp.tool(
-    name="execute_query",
+    name="podbc_execute_query",
     description="Execute a SQL query and return results in JSONL format."
 )
-def execute_query(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None,
+def podbc_execute_query(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None,
                   url:Optional[str]=None) -> str:
     """
     Execute a SQL query and return results in JSONL format.
@@ -293,10 +293,10 @@ def execute_query(query: str, max_rows: int = 100, params: Optional[Dict[str, An
 
 
 @mcp.tool(
-    name="execute_query_md",
+    name="podbc_execute_query_md",
     description="Execute a SQL query and return results in Markdown table format."
 )
-def execute_query_md(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None, 
+def podbc_execute_query_md(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None, 
                      url:Optional[str]=None) -> str:
     """
     Execute a SQL query and return results in Markdown table format.
@@ -343,10 +343,10 @@ def execute_query_md(query: str, max_rows: int = 100, params: Optional[Dict[str,
 
 
 @mcp.tool(
-    name="query_database",
+    name="podbc_query_database",
     description="Execute a SQL query and return results in JSONL format."
 )
-def query_database(query: str, url:Optional[str]=None) -> str:
+def podbc_query_database(query: str, url:Optional[str]=None) -> str:
     """
     Execute a SQL query and return results in JSONL format.
 
@@ -381,10 +381,10 @@ def query_database(query: str, url:Optional[str]=None) -> str:
 
 
 @mcp.tool(
-    name="spasql_query",
+    name="podbc_spasql_query",
     description="Execute a SPASQL query and return results."
 )
-def spasql_query(query: str, max_rows:Optional[int] = 20, timeout:Optional[int] = 300000,  url:Optional[str]=None) -> str:
+def podbc_spasql_query(query: str, max_rows:Optional[int] = 20, timeout:Optional[int] = 300000,  url:Optional[str]=None) -> str:
     """
     Execute a SPASQL query and return results in JSONL format.
 
@@ -416,10 +416,10 @@ def spasql_query(query: str, max_rows:Optional[int] = 20, timeout:Optional[int] 
 
 
 @mcp.tool(
-    name="sparql_query",
+    name="podbc_sparql_query",
     description="Execute a SPARQL query and return results."
 )
-def sparql_query(query: str, format:Optional[str]="json", timeout:Optional[int]= 300000,  url:Optional[str]=None) -> str:
+def podbc_sparql_query(query: str, format:Optional[str]="json", timeout:Optional[int]= 300000,  url:Optional[str]=None) -> str:
     """
     Execute a SPARQL query and return results.
 
@@ -450,10 +450,10 @@ def sparql_query(query: str, format:Optional[str]="json", timeout:Optional[int]=
 
 
 @mcp.tool(
-    name="virtuoso_support_ai",
+    name="podbc_virtuoso_support_ai",
     description="Tool to use the Virtuoso AI support function"
 )
-def virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, url:Optional[str]=None) -> str:
+def podbc_virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, url:Optional[str]=None) -> str:
     """
     Tool to use the Virtuoso AI support function
 
@@ -484,10 +484,10 @@ def virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, url:Optional[st
 
 
 @mcp.tool(
-    name="sparql_func",
+    name="podbc_sparql_func",
     description="Call ???."
 )
-def sparql_func(prompt: str, api_key:Optional[str]=None, url:Optional[str]=None) -> str:
+def podbc_sparql_func(prompt: str, api_key:Optional[str]=None, url:Optional[str]=None) -> str:
     """
     Call OpenAI func.
 
