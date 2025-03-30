@@ -76,7 +76,7 @@ Add the following to `claude_desktop_config.json`:
   }
 }
 ```
-
+---
 # Usage 
 ## Database Management System (DBMS) Connection URLs 
 Here are the pyodbc URL examples for connecting to DBMS systems that have been tested using this mcp-server.
