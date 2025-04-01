@@ -57,6 +57,7 @@ A lightweight MCP (Model Context Protocol) server for ODBC built with **FastAPI*
 Clone this repository:
 ```bash
 git clone https://github.com/OpenLinkSoftware/mcp-sqlalchemy-server.git
+cd mcp-sqlalchemy-server
 ```
 
 ---
