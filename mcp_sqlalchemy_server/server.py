@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime, date
 import os
 import logging
@@ -71,11 +72,20 @@ def podbc_get_schemas(url:Optional[str]=None) -> str:
     """
     try:
         engine = get_engine(True, url)
-        inspector = inspect(engine)
 
-        schemas = inspector.get_schema_names()
-        # return schemas
-        return json.dumps(schemas)
+        query = text("""
+            SELECT DISTINCT name_part(KEY_TABLE, 0) AS CATALOG_NAME
+            FROM DB.DBA.SYS_KEYS
+            WHERE __any_grants(KEY_TABLE)
+            AND table_type(KEY_TABLE) = 'TABLE'
+            AND KEY_IS_MAIN = 1
+            AND KEY_MIGRATE_TO IS NULL
+        """)
+
+        with engine.connect() as conn:
+            result = conn.execute(query)
+            catalogs = {row.CATALOG_NAME for row in result.fetchall()}
+            return json.dumps(list(catalogs))
 
     except SQLAlchemyError as e:
         logging.error(f"Error retrieving schemas: {e}")
@@ -84,15 +94,11 @@ def podbc_get_schemas(url:Optional[str]=None) -> str:
 
 @mcp.tool(
     name="podbc_get_tables",
-    description="Retrieve and return a list containing information about tables in the format "
-                "[{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}]. "
-                "If `schema` is None, returns tables for all schemas. "
-                "If `schema` is not None, returns tables for the specified schema."
+    description="Retrieve and return a list containing information about tables in specified schema, if empty uses connection default"
 )
 def podbc_get_tables(Schema: Optional[str] = None, url:Optional[str]=None) -> str:
     """
-    Retrieve and return a list containing information about tables in the format
-    [{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}].
+    Retrieve and return a list containing information about tables.
 
     If `schema` is None, returns tables for all schemas.
     If `schema` is not None, returns tables for the specified schema.
@@ -102,33 +108,36 @@ def podbc_get_tables(Schema: Optional[str] = None, url:Optional[str]=None) -> st
         url (Optional[str]=None): Optional url connection string.
 
     Returns:
-        str: A list containing information about tables in the specified format.
+        str: A list containing information about tables.
     """
+    _schema = "%" if Schema is None else Schema
+    params = {"cat":_schema}
     try:
         engine = get_engine(True, url)
-        inspector = inspect(engine)
 
-        tables_info = []
+        query = text("""
+            SELECT 
+            name_part(KEY_TABLE,0) AS TABLE_CAT VARCHAR(128),
+	        name_part(KEY_TABLE,1) AS TABLE_SCHEM VARCHAR(128),
+	        name_part(KEY_TABLE,2) AS TABLE_NAME VARCHAR(128)
+        FROM DB.DBA.SYS_KEYS 
+        WHERE __any_grants(KEY_TABLE) AND 
+	    UPPER(name_part(KEY_TABLE,0)) LIKE UPPER(:cat) AND 
+	    locate (concat ('G', table_type (KEY_TABLE)), 'GTABLEGVIEW') > 0 AND 
+	    KEY_IS_MAIN = 1 AND
+	    KEY_MIGRATE_TO IS NULL
+        ORDER BY 2, 3
+        """)
 
-        if Schema is None:
-            # Retrieve a list of all schema names
-            schemas = inspector.get_schema_names()
+        with engine.connect() as conn:
+            rs = conn.execute(query, params)
 
-            # Iterate over each schema to retrieve table names
-            for schema_name in schemas:
-                tables = inspector.get_table_names(schema=schema_name)
-                for table in tables:
-                    tables_info.append({"schema": schema_name, "table": table})
-        else:
-            # Retrieve table names for the specified schema
-            tables = inspector.get_table_names(schema=Schema)
-            for table in tables:
-                tables_info.append({"schema": Schema, "table": table})
+            results = []
+            for row in rs:
+                results.append(dict(row._mapping))
 
-        # Return the list containing table information
-        # return tables_info
-        return json.dumps(tables_info)
-    
+            return json.dumps(results, indent=2)
+
     except SQLAlchemyError as e:
         logging.error(f"Error retrieving tables: {e}")
         raise
@@ -156,26 +165,192 @@ def podbc_describe_table(Schema:str, table: str, url:Optional[str]=None) -> str:
     """
     try:
         engine = get_engine(True, url)
-        inspector = inspect(engine)
-
         table_definition = {}
+        cat = "%" if Schema is None else Schema
 
-        if inspector.has_table(table_name=table, schema=Schema):
-                table_definition = _get_table_info(inspector, Schema, table)
+        with engine.connect() as conn:
+            rc, tbl = _has_table(conn, cat=cat, table=table)
+            if rc:
+                table_definition = _get_table_info(conn, cat=tbl.get("cat"), sch=tbl.get("sch"), table=tbl.get("name"))
 
-        # return table_definition
-        return json.dumps(table_definition)
+        return json.dumps(table_definition, indent=2)
     except SQLAlchemyError as e:
         logging.error(f"Error retrieving table definition: {e}")
         raise
 
 
-def _get_table_info(inspector, Schema: str, table: str) -> Dict[str, Any]:
+def _has_table(conn, cat:str, table:str) -> bool:
+    params = {"cat":cat, "tbl":table}
+
+    query = text("""
+        SELECT 
+            name_part(KEY_TABLE,0) AS TABLE_CAT VARCHAR(128),
+	        name_part(KEY_TABLE,1) AS TABLE_SCHEM VARCHAR(128),
+	        name_part(KEY_TABLE,2) AS TABLE_NAME VARCHAR(128)
+        FROM DB.DBA.SYS_KEYS 
+        WHERE __any_grants(KEY_TABLE) AND 
+	        UPPER(name_part(KEY_TABLE,0)) LIKE UPPER(:cat) AND 
+	        UPPER(name_part(KEY_TABLE,2)) LIKE UPPER(:tbl) AND 
+	        locate (concat ('G', table_type (KEY_TABLE)), 'GTABLEGVIEW') > 0 AND 
+	        KEY_IS_MAIN = 1 AND
+	        KEY_MIGRATE_TO IS NULL
+    """)
+
+    row = conn.execute(query, params).fetchone()
+    if row:
+        return True, {"cat":row.TABLE_CAT, "sch": row.TABLE_SCHEM, "name":row.TABLE_NAME}
+    else:
+        return False, {}
+    
+
+def _get_columns(conn, cat: str, sch: str, table:str):
+    params = {"cat":cat, "sch":sch, "tbl":table}
+
+    query = text("""
+        select
+            name_part (k.KEY_TABLE,0) AS TABLE_CAT VARCHAR(128),
+            name_part (k.KEY_TABLE,1) AS TABLE_SCHEM VARCHAR(128),
+            name_part (k.KEY_TABLE,2) AS TABLE_NAME VARCHAR(128),
+            c."COLUMN" AS COLUMN_NAME VARCHAR(128),
+            dv_to_sql_type3(c.COL_DTP) AS DATA_TYPE SMALLINT,
+            case when (c.COL_DTP in (125, 132) and get_keyword ('xml_col', coalesce (c.COL_OPTIONS, vector ())) is not null) then 'XMLType' else dv_type_title(c.COL_DTP) end AS TYPE_NAME VARCHAR(128),
+            c.COL_PREC AS COLUMN_SIZE INTEGER,
+            c.COL_PREC AS BUFFER_LENGTH INTEGER,
+            c.COL_SCALE AS DECIMAL_DIGITS SMALLINT,
+            2 AS NUM_PREC_RADIX SMALLINT,
+            case c.COL_NULLABLE when 1 then 0 else 1 end AS NULLABLE SMALLINT,
+            NULL AS REMARKS VARCHAR(254),
+            deserialize (c.COL_DEFAULT) AS COLUMN_DEF VARCHAR(254),
+            case 1 when 1 then dv_to_sql_type3(c.COL_DTP) else dv_to_sql_type(c.COL_DTP) end AS SQL_DATA_TYPE SMALLINT,
+            case c.COL_DTP when 129 then 1 when 210 then 2 when 211 then 3 else NULL end AS SQL_DATETIME_SUB SMALLINT,
+            c.COL_PREC AS CHAR_OCTET_LENGTH INTEGER,
+            cast ((select count(*) from DB.DBA.SYS_COLS where \\TABLE = k.KEY_TABLE and COL_ID <= c.COL_ID) as INTEGER) AS ORDINAL_POSITION INTEGER,
+            case c.COL_NULLABLE when 1 then 'NO' else 'YES' end AS IS_NULLABLE VARCHAR,
+            c.COL_CHECK as COL_CHECK
+        from DB.DBA.SYS_KEYS k, DB.DBA.SYS_KEY_PARTS kp, DB.DBA.SYS_COLS c 
+        where upper (name_part (k.KEY_TABLE,0)) like upper (:cat)
+            and upper (name_part (k.KEY_TABLE,1)) = upper (:sch)
+            and upper (name_part (k.KEY_TABLE,2)) = upper (:tbl)
+            and c.\"COLUMN\" <> '_IDN'
+            and k.KEY_IS_MAIN = 1
+            and k.KEY_MIGRATE_TO is null
+            and kp.KP_KEY_ID = k.KEY_ID
+            and COL_ID = KP_COL
+            order by KEY_TABLE, 17
+        """)
+
+    ret = []
+    for row in conn.execute(query, params):
+        ret.append(
+            { "name": row.COLUMN_NAME,
+             "type": row.TYPE_NAME,
+             "nullable": bool(row.NULLABLE),
+             "default": row.COLUMN_DEF,
+             "autoincrement": row.COL_CHECK.find("I")!=-1,
+            })
+    return ret
+
+
+def _get_pk_constraint(conn, cat: str, sch: str, table:str):
+    params = {"cat":cat, "sch":sch, "tbl":table}
+
+    query = text("""
+        select
+            name_part(v1.KEY_TABLE,0) AS \\TABLE_QUALIFIER VARCHAR(128),
+            name_part(v1.KEY_TABLE,1) AS \\TABLE_OWNER VARCHAR(128),
+            name_part(v1.KEY_TABLE,2) AS \\TABLE_NAME VARCHAR(128),
+            DB.DBA.SYS_COLS.\\COLUMN AS \\COLUMN_NAME VARCHAR(128),
+            (kp.KP_NTH+1) AS \\KEY_SEQ SMALLINT,
+            name_part (v1.KEY_NAME, 2) AS \\PK_NAME VARCHAR(128),
+            name_part(v2.KEY_TABLE,0) AS \\ROOT_QUALIFIER VARCHAR(128),
+            name_part(v2.KEY_TABLE,1) AS \\ROOT_OWNER VARCHAR(128),
+            name_part(v2.KEY_TABLE,2) AS \\ROOT_NAME VARCHAR(128)
+        from DB.DBA.SYS_KEYS v1, DB.DBA.SYS_KEYS v2,
+             DB.DBA.SYS_KEY_PARTS kp, DB.DBA.SYS_COLS
+        where upper(name_part(v1.KEY_TABLE,0)) like upper(:cat)
+            and upper(name_part(v1.KEY_TABLE,1)) = upper(:sch)
+            and upper(name_part(v1.KEY_TABLE,2)) = upper(:tbl)
+            and v1.KEY_IS_MAIN = 1
+            and v1.KEY_MIGRATE_TO is NULL
+            and v1.KEY_SUPER_ID = v2.KEY_ID
+            and kp.KP_KEY_ID = v1.KEY_ID
+            and kp.KP_NTH < v1.KEY_DECL_PARTS
+            and DB.DBA.SYS_COLS.COL_ID = kp.KP_COL
+            and DB.DBA.SYS_COLS.\\COLUMN <> '_IDN'
+        order by v1.KEY_TABLE, kp.KP_NTH
+    """)
+
+    data = conn.execute(query, params).fetchall();
+
+    ret = None
+    if len(data) > 0:
+        ret = { "constrained_columns": [row.COLUMN_NAME for row in data],
+                "name": data[0].PK_NAME,
+              }
+    return ret
+
+
+def _get_foreign_keys(conn, cat: str, sch: str, table:str):
+    params = {"cat":cat, "sch":sch, "tbl":table}
+
+    query = text("""
+        select
+            name_part (PK_TABLE, 0) as PKTABLE_QUALIFIER varchar (128),
+            name_part (PK_TABLE, 1) as PKTABLE_OWNER varchar (128),
+            name_part (PK_TABLE, 2) as PKTABLE_NAME varchar (128),
+            PKCOLUMN_NAME as PKCOLUMN_NAME varchar (128),
+            name_part (FK_TABLE, 0) as FKTABLE_QUALIFIER varchar (128),
+            name_part (FK_TABLE, 1) as FKTABLE_OWNER varchar (128),
+            name_part (FK_TABLE, 2) as FKTABLE_NAME varchar (128),
+            FKCOLUMN_NAME as FKCOLUMN_NAME varchar (128),
+            (KEY_SEQ + 1) as KEY_SEQ SMALLINT,
+            FK_NAME as FK_NAME varchar (128),
+            PK_NAME as PK_NAME varchar (128)
+        from DB.DBA.SYS_FOREIGN_KEYS
+        where upper (name_part (FK_TABLE, 0)) like upper (:cat)
+            and upper (name_part (FK_TABLE, 1)) = upper (:sch)
+            and upper (name_part (FK_TABLE, 2)) = upper (:tbl)
+        order by 1, 2, 3, 5, 6, 7, 9
+    """)
+
+    def fkey_rec():
+        return {
+            "name": None,
+            "constrained_columns": [],
+            "referred_cat": None,
+            "referred_schem": None,
+            "referred_table": None,
+            "referred_columns": [],
+            "options": {},
+        }
+
+    fkeys = defaultdict(fkey_rec)
+
+    crs = conn.execute(query, params)
+    for row in crs:
+      rec = fkeys[row.FK_NAME]
+      rec["name"] = row.FK_NAME
+
+      c_cols = rec["constrained_columns"]
+      c_cols.append(row.FKCOLUMN_NAME)
+
+      r_cols = rec["referred_columns"]
+      r_cols.append(row.PKCOLUMN_NAME)
+
+      if not rec["referred_table"]:
+        rec["referred_table"] = row.PKTABLE_NAME
+        rec["referred_schem"] = row.PKTABLE_OWNER
+        rec["referred_cat"] = row.PKTABLE_QUALIFIER
+
+    return list(fkeys.values())
+
+
+def _get_table_info(conn, cat:str, sch: str, table: str) -> Dict[str, Any]:
     """
     Helper function to retrieve table information including columns and constraints.
 
     Args:
-        inspector: SQLAlchemy inspector object.
+        conn: connection.
         schema (str): The name of the schema.
         table (str): The name of the table.
 
@@ -183,13 +358,14 @@ def _get_table_info(inspector, Schema: str, table: str) -> Dict[str, Any]:
         Dict[str, Any]: A dictionary containing the table definition, including column names, data types, nullable, autoincrement, primary key, and foreign keys.
     """
     try:
-        columns = inspector.get_columns(table, schema=Schema)
-        primary_keys = inspector.get_pk_constraint(table, schema=Schema)['constrained_columns']
-        foreign_keys = inspector.get_foreign_keys(table, schema=Schema)
+        columns = _get_columns(conn, cat=cat, sch=sch, table=table)
+        primary_keys = _get_pk_constraint(conn, cat=cat, sch=sch, table=table)['constrained_columns']
+        foreign_keys = _get_foreign_keys(conn, cat=cat, sch=sch, table=table)
 
         table_info = {
-            "schema": Schema,
-            "table": table,
+            "TABLE_CAT": cat,
+            "TABLE_SCHEM": sch,
+            "TABLE_NAME": table,
             "columns": {},
             "primary_keys": primary_keys,
             "foreign_keys": foreign_keys
@@ -210,6 +386,7 @@ def _get_table_info(inspector, Schema: str, table: str) -> Dict[str, Any]:
         logging.error(f"Error retrieving table info: {e}")
         raise
 
+
 @mcp.tool(
     name="podbc_filter_table_names",
     description="Retrieve and return a list containing information about tables whose names contain the substring 'q' in the format "
@@ -229,21 +406,31 @@ def podbc_filter_table_names(q: str, url:Optional[str]=None) -> str:
     """
     try:
         engine = get_engine(True, url)
-        inspector = inspect(engine)
 
-        tables_info = []
+        query = text("""
+            SELECT 
+            name_part(KEY_TABLE,0) AS TABLE_CAT VARCHAR(128),
+	        name_part(KEY_TABLE,1) AS TABLE_SCHEM VARCHAR(128),
+	        name_part(KEY_TABLE,2) AS TABLE_NAME VARCHAR(128)
+        FROM DB.DBA.SYS_KEYS 
+        WHERE __any_grants(KEY_TABLE) AND 
+	    locate (concat ('G', table_type (KEY_TABLE)), 'GTABLEGVIEW') > 0 AND 
+	    KEY_IS_MAIN = 1 AND
+	    KEY_MIGRATE_TO IS NULL
+        ORDER BY 2, 3
+        """)
 
-        schemas = inspector.get_schema_names()
+        results = []
 
-        # Iterate over each schema to retrieve table names
-        for schema_name in schemas:
-            tables = inspector.get_table_names(schema=schema_name)
-            for table in tables:
-                if q in table:
-                    tables_info.append({"schema": schema_name, "table": table})
+        with engine.connect() as conn:
+            rs = conn.execute(query)
 
-        # return tables_info
-        return json.dumps(tables_info)
+            # Iterate over each schema to retrieve table names
+            for row in rs:
+                if q in row.TABLE_NAME:
+                    results.append(dict(row._mapping))
+
+        return json.dumps(results, indent=2)
     except SQLAlchemyError as e:
         logging.error(f"Error filtering table names: {e}")
         raise
@@ -282,11 +469,11 @@ def podbc_execute_query(query: str, max_rows: int = 100, params: Optional[Dict[s
                 if len(results) >= max_rows:
                     break
 
-        # Convert the results to JSONL format
-        jsonl_results = "\n".join(json.dumps(row) for row in results)
+            # Convert the results to JSONL format
+            jsonl_results = "\n".join(json.dumps(row) for row in results)
 
-        # Return the JSONL formatted results
-        return jsonl_results
+            # Return the JSONL formatted results
+            return jsonl_results
     except SQLAlchemyError as e:
         logging.error(f"Error executing query: {e}")
         raise
@@ -479,7 +666,7 @@ def podbc_virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, url:Optio
             rs = connection.execute(cmd).fetchone()
             return rs[0]
     except SQLAlchemyError as e:
-        logging.error(f"Error executing query: {e}")
+        logging.error(f"Error executing request")
         raise
 
 
@@ -513,7 +700,7 @@ def podbc_sparql_func(prompt: str, api_key:Optional[str]=None, url:Optional[str]
             rs = connection.execute(cmd).fetchone()
             return rs[0]
     except SQLAlchemyError as e:
-        logging.error(f"Error executing query: {e}")
+        logging.error(f"Error executing request")
         raise
 
 
