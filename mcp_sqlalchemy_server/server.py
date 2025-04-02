@@ -512,7 +512,7 @@ def podbc_virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, user:Opti
 
 @mcp.tool(
     name="podbc_sparql_func",
-    description=""Tool to use the SPARQL AI support function""
+    description="Tool to use the SPARQL AI support function"
 )
 def podbc_sparql_func(prompt: str, api_key:Optional[str]=None, user:Optional[str]=None, 
                     password:Optional[str]=None, dsn:Optional[str]=None) -> str:
