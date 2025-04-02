@@ -1,10 +1,8 @@
 from collections import defaultdict
-from datetime import datetime, date
 import os
 import logging
 from dotenv import load_dotenv
-from sqlalchemy import VARCHAR, String, bindparam, create_engine, inspect, text
-from sqlalchemy.exc import SQLAlchemyError
+import pyodbc
 from typing import Any, Dict, List, Optional
 import json
 
@@ -17,40 +15,43 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Retrieve database connection details from environment variables
-DB_URL = os.getenv("DB_URL")
+DB_UID = os.getenv("ODBC_USER")
+DB_PWD = os.getenv("ODBC_PASSWORD")
+DB_DSN = os.getenv("ODBC_DSN")
 MAX_LONG_DATA = int(os.getenv("MAX_LONG_DATA",4096))
 API_KEY = os.getenv("API_KEY", "none")
 
 ### Database ###
 
-def get_engine(readonly=True, url:Optional[str]=None):
-    connection_string = os.getenv('DB_URL')
 
-    if url is not None:
-        connection_string = url
+def get_connection(readonly=True, uid: Optional[str] = None, pwd: Optional[str] = None, 
+                dsn: Optional[str] = None) -> pyodbc.Connection:
+    dsn = DB_DSN if dsn is None else dsn
+    uid = DB_UID if uid is None else uid
+    pwd = DB_PWD if pwd is None else pwd
 
-    if not connection_string:
-        logging.error("DB_URL environment variable is not set.")
-        raise ValueError("DB_URL environment variable is not set.")
-    
-    # logging.info(f"DB_URL: {connection_string}")
-    return create_engine(connection_string, isolation_level='AUTOCOMMIT', execution_options={'readonly': readonly})
+    if dsn is None:
+        raise ValueError("ODBC_DSN environment variable is not set.")
+    if uid is None:
+        raise ValueError("ODBC_USER environment variable is not set.")
+    if pwd is None:
+        raise ValueError("ODBC_PASSWORD environment variable is not set.")
 
-def get_db_info():
-    try:
-        engine = get_engine(readonly=True)
-        with engine.connect() as conn:
-            url = engine.url
-            return (f"Connected to [{engine.dialect.name}] "
-                    f"version {'.'.join(str(x) for x in engine.dialect.server_version_info)} "
-                    f"DSN '{url.host}' "
-                    f"as user '{url.username}'")
-    except SQLAlchemyError as e:
-        logging.error(f"Error connecting to the database: {e}")
-        raise
+    dsn_string = f"DSN={dsn};UID={uid};PWD={pwd}"
+    logging.info(f"DSN:{dsn}  UID:{uid}")
+    # connection_string="DSN=VOS;UID=dba;PWD=dba"
+
+    return pyodbc.connect(dsn_string, autocommit=True, readonly=readonly)
+
+
+def escape_sql(value: str) -> str:
+    """
+    Escape a string to prevent SQL injection.
+    """
+    return value.replace("'", "''")
+
 
 ### Constants ###
-#DB_INFO = get_db_info()
 
 
 ### MCP ###
@@ -60,34 +61,26 @@ mcp = FastMCP('mcp-sqlalchemy-server', transport=["stdio", "sse"])
     name="podbc_get_schemas",
     description="Retrieve and return a list of all schema names from the connected database."
 )
-def podbc_get_schemas(url:Optional[str]=None) -> str:
+def podbc_get_schemas(user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
     """
     Retrieve and return a list of all schema names from the connected database.
 
     Args:
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: A list of schema names.
     """
     try:
-        engine = get_engine(True, url)
-
-        query = text("""
-            SELECT DISTINCT name_part(KEY_TABLE, 0) AS CATALOG_NAME
-            FROM DB.DBA.SYS_KEYS
-            WHERE __any_grants(KEY_TABLE)
-            AND table_type(KEY_TABLE) = 'TABLE'
-            AND KEY_IS_MAIN = 1
-            AND KEY_MIGRATE_TO IS NULL
-        """)
-
-        with engine.connect() as conn:
-            result = conn.execute(query)
-            catalogs = {row.CATALOG_NAME for row in result.fetchall()}
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            rs = cursor.tables(table=None, catalog="%", schema=None, tableType=None);
+            catalogs = {row[0] for row in rs.fetchall()}
             return json.dumps(list(catalogs))
 
-    except SQLAlchemyError as e:
+    except pyodbc.Error as e:
         logging.error(f"Error retrieving schemas: {e}")
         raise
 
@@ -96,7 +89,8 @@ def podbc_get_schemas(url:Optional[str]=None) -> str:
     name="podbc_get_tables",
     description="Retrieve and return a list containing information about tables in specified schema, if empty uses connection default"
 )
-def podbc_get_tables(Schema: Optional[str] = None, url:Optional[str]=None) -> str:
+def podbc_get_tables(Schema: Optional[str] = None, user:Optional[str]=None, 
+                    password:Optional[str]=None, dsn:Optional[str]=None) -> str:
     """
     Retrieve and return a list containing information about tables.
 
@@ -105,40 +99,24 @@ def podbc_get_tables(Schema: Optional[str] = None, url:Optional[str]=None) -> st
 
     Args:
         schema (Optional[str]): The name of the schema to retrieve tables for. If None, retrieves tables for all schemas.
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: A list containing information about tables.
     """
-    _schema = "%" if Schema is None else Schema
-    params = {"cat":_schema}
+    cat = "%" if Schema is None else Schema
     try:
-        engine = get_engine(True, url)
-
-        query = text("""
-            SELECT 
-            name_part(KEY_TABLE,0) AS TABLE_CAT VARCHAR(128),
-	        name_part(KEY_TABLE,1) AS TABLE_SCHEM VARCHAR(128),
-	        name_part(KEY_TABLE,2) AS TABLE_NAME VARCHAR(128)
-        FROM DB.DBA.SYS_KEYS 
-        WHERE __any_grants(KEY_TABLE) AND 
-	    UPPER(name_part(KEY_TABLE,0)) LIKE UPPER(:cat) AND 
-	    locate (concat ('G', table_type (KEY_TABLE)), 'GTABLEGVIEW') > 0 AND 
-	    KEY_IS_MAIN = 1 AND
-	    KEY_MIGRATE_TO IS NULL
-        ORDER BY 2, 3
-        """)
-
-        with engine.connect() as conn:
-            rs = conn.execute(query, params)
-
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            rs = cursor.tables(table=None, catalog=cat, schema=None, tableType="TABLE");
             results = []
             for row in rs:
-                results.append(dict(row._mapping))
-
+                results.append({"TABLE_CAT":row[0], "TABLE_SCHEM":row[1], "TABLE_NAME":row[2]})
+                
             return json.dumps(results, indent=2)
-
-    except SQLAlchemyError as e:
+    except pyodbc.Error as e:
         logging.error(f"Error retrieving tables: {e}")
         raise
         
@@ -148,7 +126,8 @@ def podbc_get_tables(Schema: Optional[str] = None, url:Optional[str]=None) -> st
     description="Retrieve and return a dictionary containing the definition of a table, including column names, data types, nullable,"
                 " autoincrement, primary key, and foreign keys."
 )
-def podbc_describe_table(Schema:str, table: str, url:Optional[str]=None) -> str:
+def podbc_describe_table(Schema:str, table: str, user:Optional[str]=None, 
+                        password:Optional[str]=None, dsn:Optional[str]=None) -> str:
     """
     Retrieve and return a dictionary containing the definition of a table, including column names, data types, nullable, autoincrement, primary key, and foreign keys.
 
@@ -158,161 +137,65 @@ def podbc_describe_table(Schema:str, table: str, url:Optional[str]=None) -> str:
     Args:
         schema (str): The name of the schema to retrieve the table definition for. If None, retrieves the table definition for all schemas.
         table (str): The name of the table to retrieve the definition for.
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: A dictionary containing the table definition, including column names, data types, nullable, autoincrement, primary key, and foreign keys.
     """
+    cat = "%" if Schema is None else Schema
+    table_definition = {}
     try:
-        engine = get_engine(True, url)
-        table_definition = {}
-        cat = "%" if Schema is None else Schema
-
-        with engine.connect() as conn:
+        with get_connection(True, user, password, dsn) as conn:
             rc, tbl = _has_table(conn, cat=cat, table=table)
             if rc:
                 table_definition = _get_table_info(conn, cat=tbl.get("cat"), sch=tbl.get("sch"), table=tbl.get("name"))
 
         return json.dumps(table_definition, indent=2)
-    except SQLAlchemyError as e:
+
+    except pyodbc.Error as e:
         logging.error(f"Error retrieving table definition: {e}")
         raise
 
 
-def _has_table(conn, cat:str, table:str) -> bool:
-    params = {"cat":cat, "tbl":table}
+def _has_table(conn, cat:str, table:str):
+    with conn.cursor() as cursor:
+        row = cursor.tables(table=table, catalog=cat, schema=None, tableType=None).fetchone()
+        if row:
+            return True, {"cat":row[0], "sch": row[1], "name":row[2]}
+        else:
+            return False, {}
 
-    query = text("""
-        SELECT 
-            name_part(KEY_TABLE,0) AS TABLE_CAT VARCHAR(128),
-	        name_part(KEY_TABLE,1) AS TABLE_SCHEM VARCHAR(128),
-	        name_part(KEY_TABLE,2) AS TABLE_NAME VARCHAR(128)
-        FROM DB.DBA.SYS_KEYS 
-        WHERE __any_grants(KEY_TABLE) AND 
-	        UPPER(name_part(KEY_TABLE,0)) LIKE UPPER(:cat) AND 
-	        UPPER(name_part(KEY_TABLE,2)) LIKE UPPER(:tbl) AND 
-	        locate (concat ('G', table_type (KEY_TABLE)), 'GTABLEGVIEW') > 0 AND 
-	        KEY_IS_MAIN = 1 AND
-	        KEY_MIGRATE_TO IS NULL
-    """)
-
-    row = conn.execute(query, params).fetchone()
-    if row:
-        return True, {"cat":row.TABLE_CAT, "sch": row.TABLE_SCHEM, "name":row.TABLE_NAME}
-    else:
-        return False, {}
-    
 
 def _get_columns(conn, cat: str, sch: str, table:str):
-    params = {"cat":cat, "sch":sch, "tbl":table}
-
-    query = text("""
-        select
-            name_part (k.KEY_TABLE,0) AS TABLE_CAT VARCHAR(128),
-            name_part (k.KEY_TABLE,1) AS TABLE_SCHEM VARCHAR(128),
-            name_part (k.KEY_TABLE,2) AS TABLE_NAME VARCHAR(128),
-            c."COLUMN" AS COLUMN_NAME VARCHAR(128),
-            dv_to_sql_type3(c.COL_DTP) AS DATA_TYPE SMALLINT,
-            case when (c.COL_DTP in (125, 132) and get_keyword ('xml_col', coalesce (c.COL_OPTIONS, vector ())) is not null) then 'XMLType' else dv_type_title(c.COL_DTP) end AS TYPE_NAME VARCHAR(128),
-            c.COL_PREC AS COLUMN_SIZE INTEGER,
-            c.COL_PREC AS BUFFER_LENGTH INTEGER,
-            c.COL_SCALE AS DECIMAL_DIGITS SMALLINT,
-            2 AS NUM_PREC_RADIX SMALLINT,
-            case c.COL_NULLABLE when 1 then 0 else 1 end AS NULLABLE SMALLINT,
-            NULL AS REMARKS VARCHAR(254),
-            deserialize (c.COL_DEFAULT) AS COLUMN_DEF VARCHAR(254),
-            case 1 when 1 then dv_to_sql_type3(c.COL_DTP) else dv_to_sql_type(c.COL_DTP) end AS SQL_DATA_TYPE SMALLINT,
-            case c.COL_DTP when 129 then 1 when 210 then 2 when 211 then 3 else NULL end AS SQL_DATETIME_SUB SMALLINT,
-            c.COL_PREC AS CHAR_OCTET_LENGTH INTEGER,
-            cast ((select count(*) from DB.DBA.SYS_COLS where \\TABLE = k.KEY_TABLE and COL_ID <= c.COL_ID) as INTEGER) AS ORDINAL_POSITION INTEGER,
-            case c.COL_NULLABLE when 1 then 'NO' else 'YES' end AS IS_NULLABLE VARCHAR,
-            c.COL_CHECK as COL_CHECK
-        from DB.DBA.SYS_KEYS k, DB.DBA.SYS_KEY_PARTS kp, DB.DBA.SYS_COLS c 
-        where upper (name_part (k.KEY_TABLE,0)) like upper (:cat)
-            and upper (name_part (k.KEY_TABLE,1)) = upper (:sch)
-            and upper (name_part (k.KEY_TABLE,2)) = upper (:tbl)
-            and c.\"COLUMN\" <> '_IDN'
-            and k.KEY_IS_MAIN = 1
-            and k.KEY_MIGRATE_TO is null
-            and kp.KP_KEY_ID = k.KEY_ID
-            and COL_ID = KP_COL
-            order by KEY_TABLE, 17
-        """)
-
-    ret = []
-    for row in conn.execute(query, params):
-        ret.append(
-            { "name": row.COLUMN_NAME,
-             "type": row.TYPE_NAME,
-             "nullable": bool(row.NULLABLE),
-             "default": row.COLUMN_DEF,
-             "autoincrement": row.COL_CHECK.find("I")!=-1,
+    with conn.cursor() as cursor:
+        ret = []
+        for row in cursor.columns(table=table, catalog=cat, schema=sch):
+            ret.append({
+                "name":row[3],
+                "type":row[5],
+                "column_size": row[6],
+                # "decimal_digits":row[8],
+                "num_prec_radix":row[9],
+                "nullable":False if row[10]==0 else True,
+                "default":row[12]
             })
-    return ret
+        return ret
 
 
 def _get_pk_constraint(conn, cat: str, sch: str, table:str):
-    params = {"cat":cat, "sch":sch, "tbl":table}
-
-    query = text("""
-        select
-            name_part(v1.KEY_TABLE,0) AS \\TABLE_QUALIFIER VARCHAR(128),
-            name_part(v1.KEY_TABLE,1) AS \\TABLE_OWNER VARCHAR(128),
-            name_part(v1.KEY_TABLE,2) AS \\TABLE_NAME VARCHAR(128),
-            DB.DBA.SYS_COLS.\\COLUMN AS \\COLUMN_NAME VARCHAR(128),
-            (kp.KP_NTH+1) AS \\KEY_SEQ SMALLINT,
-            name_part (v1.KEY_NAME, 2) AS \\PK_NAME VARCHAR(128),
-            name_part(v2.KEY_TABLE,0) AS \\ROOT_QUALIFIER VARCHAR(128),
-            name_part(v2.KEY_TABLE,1) AS \\ROOT_OWNER VARCHAR(128),
-            name_part(v2.KEY_TABLE,2) AS \\ROOT_NAME VARCHAR(128)
-        from DB.DBA.SYS_KEYS v1, DB.DBA.SYS_KEYS v2,
-             DB.DBA.SYS_KEY_PARTS kp, DB.DBA.SYS_COLS
-        where upper(name_part(v1.KEY_TABLE,0)) like upper(:cat)
-            and upper(name_part(v1.KEY_TABLE,1)) = upper(:sch)
-            and upper(name_part(v1.KEY_TABLE,2)) = upper(:tbl)
-            and v1.KEY_IS_MAIN = 1
-            and v1.KEY_MIGRATE_TO is NULL
-            and v1.KEY_SUPER_ID = v2.KEY_ID
-            and kp.KP_KEY_ID = v1.KEY_ID
-            and kp.KP_NTH < v1.KEY_DECL_PARTS
-            and DB.DBA.SYS_COLS.COL_ID = kp.KP_COL
-            and DB.DBA.SYS_COLS.\\COLUMN <> '_IDN'
-        order by v1.KEY_TABLE, kp.KP_NTH
-    """)
-
-    data = conn.execute(query, params).fetchall();
-
-    ret = None
-    if len(data) > 0:
-        ret = { "constrained_columns": [row.COLUMN_NAME for row in data],
-                "name": data[0].PK_NAME,
-              }
-    return ret
+    with conn.cursor() as cursor:
+        ret = None
+        rs = cursor.primaryKeys(table=table, catalog=cat, schema=sch).fetchall()
+        if len(rs) > 0:
+            ret = { "constrained_columns": [row[3] for row in rs],
+                "name": rs[0][5]
+            }
+        return ret
 
 
 def _get_foreign_keys(conn, cat: str, sch: str, table:str):
-    params = {"cat":cat, "sch":sch, "tbl":table}
-
-    query = text("""
-        select
-            name_part (PK_TABLE, 0) as PKTABLE_QUALIFIER varchar (128),
-            name_part (PK_TABLE, 1) as PKTABLE_OWNER varchar (128),
-            name_part (PK_TABLE, 2) as PKTABLE_NAME varchar (128),
-            PKCOLUMN_NAME as PKCOLUMN_NAME varchar (128),
-            name_part (FK_TABLE, 0) as FKTABLE_QUALIFIER varchar (128),
-            name_part (FK_TABLE, 1) as FKTABLE_OWNER varchar (128),
-            name_part (FK_TABLE, 2) as FKTABLE_NAME varchar (128),
-            FKCOLUMN_NAME as FKCOLUMN_NAME varchar (128),
-            (KEY_SEQ + 1) as KEY_SEQ SMALLINT,
-            FK_NAME as FK_NAME varchar (128),
-            PK_NAME as PK_NAME varchar (128)
-        from DB.DBA.SYS_FOREIGN_KEYS
-        where upper (name_part (FK_TABLE, 0)) like upper (:cat)
-            and upper (name_part (FK_TABLE, 1)) = upper (:sch)
-            and upper (name_part (FK_TABLE, 2)) = upper (:tbl)
-        order by 1, 2, 3, 5, 6, 7, 9
-    """)
-
     def fkey_rec():
         return {
             "name": None,
@@ -325,38 +208,27 @@ def _get_foreign_keys(conn, cat: str, sch: str, table:str):
         }
 
     fkeys = defaultdict(fkey_rec)
+    with conn.cursor() as cursor:
+        rs = cursor.foreignKeys(foreignTable=table, foreignCatalog=cat, foreignSchema=sch)
+        for row in rs:
+            rec = fkeys[row[11]]  #.FK_NAME
+            rec["name"] = row[11] #.FK_NAME
 
-    crs = conn.execute(query, params)
-    for row in crs:
-      rec = fkeys[row.FK_NAME]
-      rec["name"] = row.FK_NAME
+            c_cols = rec["constrained_columns"]
+            c_cols.append(row[7]) #.FKCOLUMN_NAME)
 
-      c_cols = rec["constrained_columns"]
-      c_cols.append(row.FKCOLUMN_NAME)
+            r_cols = rec["referred_columns"]
+            r_cols.append(row[3]) #.PKCOLUMN_NAME)
 
-      r_cols = rec["referred_columns"]
-      r_cols.append(row.PKCOLUMN_NAME)
-
-      if not rec["referred_table"]:
-        rec["referred_table"] = row.PKTABLE_NAME
-        rec["referred_schem"] = row.PKTABLE_OWNER
-        rec["referred_cat"] = row.PKTABLE_QUALIFIER
+            if not rec["referred_table"]:
+                rec["referred_table"] = row[2]  #.PKTABLE_NAME
+                rec["referred_schem"] = row[1] #.PKTABLE_OWNER
+                rec["referred_cat"] = row[0] #.PKTABLE_CAT
 
     return list(fkeys.values())
 
 
 def _get_table_info(conn, cat:str, sch: str, table: str) -> Dict[str, Any]:
-    """
-    Helper function to retrieve table information including columns and constraints.
-
-    Args:
-        conn: connection.
-        schema (str): The name of the schema.
-        table (str): The name of the table.
-
-    Returns:
-        Dict[str, Any]: A dictionary containing the table definition, including column names, data types, nullable, autoincrement, primary key, and foreign keys.
-    """
     try:
         columns = _get_columns(conn, cat=cat, sch=sch, table=table)
         primary_keys = _get_pk_constraint(conn, cat=cat, sch=sch, table=table)['constrained_columns']
@@ -366,72 +238,50 @@ def _get_table_info(conn, cat:str, sch: str, table: str) -> Dict[str, Any]:
             "TABLE_CAT": cat,
             "TABLE_SCHEM": sch,
             "TABLE_NAME": table,
-            "columns": {},
+            "columns": columns,
             "primary_keys": primary_keys,
             "foreign_keys": foreign_keys
         }
 
         for column in columns:
-            column_info = {
-                "type": type(column['type']).__name__,
-                "nullable": column['nullable'],
-                "autoincrement": column['autoincrement'],
-                "default": column['default'],
-                "primary_key": column['name'] in primary_keys
-            }
-            table_info["columns"][column['name']] = column_info
+            column["primary_key"] = column['name'] in primary_keys
 
         return table_info
-    except SQLAlchemyError as e:
+
+    except pyodbc.Error as e:
         logging.error(f"Error retrieving table info: {e}")
         raise
 
 
 @mcp.tool(
     name="podbc_filter_table_names",
-    description="Retrieve and return a list containing information about tables whose names contain the substring 'q' in the format "
-                "[{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}]."
+    description="Retrieve and return a list containing information about tables whose names contain the substring 'q' ."
 )
-def podbc_filter_table_names(q: str, url:Optional[str]=None) -> str:
+def podbc_filter_table_names(q: str, user:Optional[str]=None, password:Optional[str]=None, 
+                            dsn:Optional[str]=None) -> str:
     """
-    Retrieve and return a list containing information about tables whose names contain the substring 'q' in the format
-    [{'schema': 'schema_name', 'table': 'table_name'}, {'schema': 'schema_name', 'table': 'table_name'}].
+    Retrieve and return a list containing information about tables whose names contain the substring 'q'
 
     Args:
         q (str): The substring to filter table names by.
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: A list containing information about tables whose names contain the substring 'q'.
     """
     try:
-        engine = get_engine(True, url)
-
-        query = text("""
-            SELECT 
-            name_part(KEY_TABLE,0) AS TABLE_CAT VARCHAR(128),
-	        name_part(KEY_TABLE,1) AS TABLE_SCHEM VARCHAR(128),
-	        name_part(KEY_TABLE,2) AS TABLE_NAME VARCHAR(128)
-        FROM DB.DBA.SYS_KEYS 
-        WHERE __any_grants(KEY_TABLE) AND 
-	    locate (concat ('G', table_type (KEY_TABLE)), 'GTABLEGVIEW') > 0 AND 
-	    KEY_IS_MAIN = 1 AND
-	    KEY_MIGRATE_TO IS NULL
-        ORDER BY 2, 3
-        """)
-
-        results = []
-
-        with engine.connect() as conn:
-            rs = conn.execute(query)
-
-            # Iterate over each schema to retrieve table names
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            rs = cursor.tables(table=None, catalog='%', schema='%', tableType="TABLE");
+            results = []
             for row in rs:
-                if q in row.TABLE_NAME:
-                    results.append(dict(row._mapping))
+                if q in row[2]:
+                    results.append({"TABLE_CAT":row[0], "TABLE_SCHEM":row[1], "TABLE_NAME":row[2]})
 
-        return json.dumps(results, indent=2)
-    except SQLAlchemyError as e:
+            return json.dumps(results, indent=2)
+    except pyodbc.Error as e:
         logging.error(f"Error filtering table names: {e}")
         raise
 
@@ -441,7 +291,7 @@ def podbc_filter_table_names(q: str, url:Optional[str]=None) -> str:
     description="Execute a SQL query and return results in JSONL format."
 )
 def podbc_execute_query(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None,
-                  url:Optional[str]=None) -> str:
+                  user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
     """
     Execute a SQL query and return results in JSONL format.
 
@@ -449,32 +299,32 @@ def podbc_execute_query(query: str, max_rows: int = 100, params: Optional[Dict[s
         query (str): The SQL query to execute.
         max_rows (int): Maximum number of rows to return. Default is 100.
         params (Optional[Dict[str, Any]]): Optional dictionary of parameters to pass to the query.
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: Results in JSONL format.
     """
     try:
-        engine = get_engine(True, url)
-        with engine.connect() as connection:
-            # Execute the query with parameters
-            rs = connection.execute(text(query), params)
-            
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            rs = cursor.execute(query) if params is None else cursor.execute(query, params)
+            columns = [column[0] for column in rs.description]            
             results = []
-            
             for row in rs:
-                # results.append(dict(row._mapping))
-                truncated_row = {key: (str(value)[:MAX_LONG_DATA] if value is not None else None) for key, value in row._mapping.items()}
+                rs_dict = dict(zip(columns, row))
+                truncated_row = {key: (str(value)[:MAX_LONG_DATA] if value is not None else None) for key, value in rs_dict.items()}
                 results.append(truncated_row)                
                 if len(results) >= max_rows:
                     break
-
+                
             # Convert the results to JSONL format
             jsonl_results = "\n".join(json.dumps(row) for row in results)
 
             # Return the JSONL formatted results
             return jsonl_results
-    except SQLAlchemyError as e:
+    except pyodbc.Error as e:
         logging.error(f"Error executing query: {e}")
         raise
 
@@ -484,7 +334,7 @@ def podbc_execute_query(query: str, max_rows: int = 100, params: Optional[Dict[s
     description="Execute a SQL query and return results in Markdown table format."
 )
 def podbc_execute_query_md(query: str, max_rows: int = 100, params: Optional[Dict[str, Any]] = None, 
-                     url:Optional[str]=None) -> str:
+                     user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
     """
     Execute a SQL query and return results in Markdown table format.
 
@@ -492,40 +342,39 @@ def podbc_execute_query_md(query: str, max_rows: int = 100, params: Optional[Dic
         query (str): The SQL query to execute.
         max_rows (int): Maximum number of rows to return. Default is 100.
         params (Optional[Dict[str, Any]]): Optional dictionary of parameters to pass to the query.
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: Results in Markdown table format.
     """
     try:
-        engine = get_engine(True, url)
-        with engine.connect() as connection:
-            # Execute the query with parameters
-            rs = connection.execute(text(query), params)
-
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            rs = cursor.execute(query) if params is None else cursor.execute(query, params)
+            columns = [column[0] for column in rs.description]            
             results = []
-            columns = rs.keys()
-
-            # Iterate over the result set and convert each row to a dictionary
             for row in rs:
-                # results.append(dict(row._mapping))
-                truncated_row = {key: (str(value)[:MAX_LONG_DATA] if value is not None else None) for key, value in row._mapping.items()}
+                rs_dict = dict(zip(columns, row))
+                truncated_row = {key: (str(value)[:MAX_LONG_DATA] if value is not None else None) for key, value in rs_dict.items()}
                 results.append(truncated_row)                
                 if len(results) >= max_rows:
                     break
+                
+            # Create the Markdown table header
+            md_table = "| " + " | ".join(columns) + " |\n"
+            md_table += "| " + " | ".join(["---"] * len(columns)) + " |\n"
 
-        # Create the Markdown table header
-        md_table = "| " + " | ".join(columns) + " |\n"
-        md_table += "| " + " | ".join(["---"] * len(columns)) + " |\n"
+            # Add rows to the Markdown table
+            for row in results:
+                md_table += "| " + " | ".join(str(row[col]) for col in columns) + " |\n"
 
-        # Add rows to the Markdown table
-        for row in results:
-            md_table += "| " + " | ".join(str(row[col]) for col in columns) + " |\n"
+            # Return the Markdown formatted results
+            return md_table
 
-        # Return the Markdown formatted results
-        return md_table
-    except SQLAlchemyError as e:
-        logging.error(f"Error executing query for Markdown: {e}")
+    except pyodbc.Error as e:
+        logging.error(f"Error executing query: {e}")
         raise
 
 
@@ -533,36 +382,37 @@ def podbc_execute_query_md(query: str, max_rows: int = 100, params: Optional[Dic
     name="podbc_query_database",
     description="Execute a SQL query and return results in JSONL format."
 )
-def podbc_query_database(query: str, url:Optional[str]=None) -> str:
+def podbc_query_database(query: str, user:Optional[str]=None, password:Optional[str]=None, 
+                    dsn:Optional[str]=None) -> str:
     """
     Execute a SQL query and return results in JSONL format.
 
     Args:
         query (str): The SQL query to execute.
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: Results in JSONL format.
     """
     try:
-        engine = get_engine(True, url)
-        with engine.connect() as connection:
-            # Execute the query with parameters
-            rs = connection.execute(text(query))
-            
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            rs = cursor.execute(query)
+            columns = [column[0] for column in rs.description]            
             results = []
-            
             for row in rs:
-                # results.append(dict(row._mapping))
-                truncated_row = {key: (str(value)[:MAX_LONG_DATA] if value is not None else None) for key, value in row._mapping.items()}
+                rs_dict = dict(zip(columns, row))
+                truncated_row = {key: (str(value)[:MAX_LONG_DATA] if value is not None else None) for key, value in rs_dict.items()}
                 results.append(truncated_row)                
+                
+            # Convert the results to JSONL format
+            jsonl_results = "\n".join(json.dumps(row) for row in results)
 
-        # Convert the results to JSONL format
-        jsonl_results = "\n".join(json.dumps(row) for row in results)
-
-        # Return the JSONL formatted results
-        return jsonl_results
-    except SQLAlchemyError as e:
+            # Return the JSONL formatted results
+            return jsonl_results
+    except pyodbc.Error as e:
         logging.error(f"Error executing query: {e}")
         raise
 
@@ -571,7 +421,8 @@ def podbc_query_database(query: str, url:Optional[str]=None) -> str:
     name="podbc_spasql_query",
     description="Execute a SPASQL query and return results."
 )
-def podbc_spasql_query(query: str, max_rows:Optional[int] = 20, timeout:Optional[int] = 300000,  url:Optional[str]=None) -> str:
+def podbc_spasql_query(query: str, max_rows:Optional[int] = 20, timeout:Optional[int] = 300000,
+                    user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
     """
     Execute a SPASQL query and return results in JSONL format.
 
@@ -579,34 +430,30 @@ def podbc_spasql_query(query: str, max_rows:Optional[int] = 20, timeout:Optional
         query (str): The SPASQL query to execute.
         max_rows (int): Maximum number of rows to return. Default is 100.
         timeout (int): Query timeout. Default is 30000ms.
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: Results in requested format as string.
     """
     try:
-        engine = get_engine(True, url)
-        with engine.connect() as connection:
-            # Execute the query with parameters
-            cmd = text("select Demo.demo.execute_spasql_query(:query, :limit, :timeout) as result")
-            cmd = cmd.bindparams(
-                bindparam("query", type_=VARCHAR, literal_execute=True, value=query),
-                bindparam("limit", value=max_rows),
-                bindparam("timeout", value=timeout),
-            )
-            rs = connection.execute(cmd).fetchone()
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            cmd = f"select Demo.demo.execute_spasql_query('{escape_sql(query)}', ?, ?) as result"
+            rs = cursor.execute(cmd, (max_rows, timeout,)).fetchone()
             return rs[0]
-    except SQLAlchemyError as e:
+    except pyodbc.Error as e:
         logging.error(f"Error executing query: {e}")
         raise
-
 
 
 @mcp.tool(
     name="podbc_sparql_query",
     description="Execute a SPARQL query and return results."
 )
-def podbc_sparql_query(query: str, format:Optional[str]="json", timeout:Optional[int]= 300000,  url:Optional[str]=None) -> str:
+def podbc_sparql_query(query: str, format:Optional[str]="json", timeout:Optional[int]= 300000,
+                user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
     """
     Execute a SPARQL query and return results.
 
@@ -614,24 +461,20 @@ def podbc_sparql_query(query: str, format:Optional[str]="json", timeout:Optional
         query (str): The SPARQL query to execute.
         format (str): Maximum number of rows to return. Default is "json".
         timeout (int): Query timeout. Default is 300000ms.
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: Results in requested format as string.
     """
     try:
-        engine = get_engine(True, url)
-        with engine.connect() as connection:
-            # Execute the query with parameters
-            cmd = text('select "UB".dba."sparqlQuery"(:query, :fmt, :timeout) as result')
-            cmd = cmd.bindparams(
-                bindparam("query", type_=VARCHAR, literal_execute=True, value=query),
-                bindparam("fmt", value=format),
-                bindparam("timeout", value=timeout),
-            )
-            rs = connection.execute(cmd).fetchone()
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            cmd = f"select \"UB\".dba.\"sparqlQuery\"('{escape_sql(query)}', ?, ?) as result"
+            rs = cursor.execute(cmd, (format, timeout,)).fetchone()
             return rs[0]
-    except SQLAlchemyError as e:
+    except pyodbc.Error as e:
         logging.error(f"Error executing query: {e}")
         raise
 
@@ -640,71 +483,62 @@ def podbc_sparql_query(query: str, format:Optional[str]="json", timeout:Optional
     name="podbc_virtuoso_support_ai",
     description="Tool to use the Virtuoso AI support function"
 )
-def podbc_virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, url:Optional[str]=None) -> str:
+def podbc_virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, user:Optional[str]=None, 
+                            password:Optional[str]=None, dsn:Optional[str]=None) -> str:
     """
     Tool to use the Virtuoso AI support function
 
     Args:
         prompt (str): AI prompt text (required).
         api_key (str): API key for AI service (optional).
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: Results data in JSON.
     """
     try:
         _api_key = api_key if api_key is not None else API_KEY
-        engine = get_engine(True, url)
-        with engine.connect() as connection:
-            # Execute the query with parameters
-            cmd = text('select DEMO.DBA.OAI_VIRTUOSO_SUPPORT_AI(:prompt, :key) as result')
-            cmd = cmd.bindparams(
-                # bindparam("prompt", type_=VARCHAR, literal_execute=True, value=prompt),
-                bindparam("prompt", value=prompt),
-                bindparam("key", value=_api_key),
-            )
-            rs = connection.execute(cmd).fetchone()
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            cmd = f"select DEMO.DBA.OAI_VIRTUOSO_SUPPORT_AI(?, ?) as result"
+            rs = cursor.execute(cmd, (prompt, _api_key,)).fetchone()
             return rs[0]
-    except SQLAlchemyError as e:
-        logging.error(f"Error executing request")
+    except pyodbc.Error as e:
+        logging.error(f"Error executing query: {e}")
         raise
 
 
 @mcp.tool(
     name="podbc_sparql_func",
-    description="Call ???."
+    description=""Tool to use the SPARQL AI support function""
 )
-def podbc_sparql_func(prompt: str, api_key:Optional[str]=None, url:Optional[str]=None) -> str:
+def podbc_sparql_func(prompt: str, api_key:Optional[str]=None, user:Optional[str]=None, 
+                    password:Optional[str]=None, dsn:Optional[str]=None) -> str:
     """
-    Call OpenAI func.
+    Call SPARQL AI func.
 
     Args:
         prompt (str): The prompt.
         api_key (str): optional.
-        url (Optional[str]=None): Optional url connection string.
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
 
     Returns:
         str: Results data in JSON.
     """
     try:
         _api_key = api_key if api_key is not None else API_KEY
-        engine = get_engine(True, url)
-        with engine.connect() as connection:
-            # Execute the query with parameters
-            cmd = text('select DEMO.DBA.OAI_SPARQL_FUNC(:prompt,:key) as result')             
-            cmd = cmd.bindparams(
-                # bindparam("prompt", type_=VARCHAR, literal_execute=True, value=prompt),
-                bindparam("prompt", value=prompt),
-                bindparam("key", value=_api_key),
-            )
-            rs = connection.execute(cmd).fetchone()
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            cmd = f"select DEMO.DBA.OAI_SPARQL_FUNC(?, ?) as result"
+            rs = cursor.execute(cmd, (prompt, _api_key,)).fetchone()
             return rs[0]
-    except SQLAlchemyError as e:
-        logging.error(f"Error executing request")
+    except pyodbc.Error as e:
+        logging.error(f"Error executing query: {e}")
         raise
-
-
-
 
 
 if __name__ == "__main__":
