@@ -257,7 +257,7 @@ def _get_table_info(conn, cat:str, sch: str, table: str) -> Dict[str, Any]:
     name="podbc_filter_table_names",
     description="Retrieve and return a list containing information about tables whose names contain the substring 'q' ."
 )
-def podbc_filter_table_names(q: str, user:Optional[str]=None, password:Optional[str]=None, 
+def podbc_filter_table_names(q: str, Schema: Optional[str] = None, user:Optional[str]=None, password:Optional[str]=None, 
                             dsn:Optional[str]=None) -> str:
     """
     Retrieve and return a list containing information about tables whose names contain the substring 'q'
@@ -271,10 +271,11 @@ def podbc_filter_table_names(q: str, user:Optional[str]=None, password:Optional[
     Returns:
         str: A list containing information about tables whose names contain the substring 'q'.
     """
+    cat = "%" if Schema is None else Schema
     try:
         with get_connection(True, user, password, dsn) as conn:
             cursor = conn.cursor()
-            rs = cursor.tables(table=None, catalog='%', schema='%', tableType="TABLE");
+            rs = cursor.tables(table=None, catalog=cat, schema='%', tableType="TABLE");
             results = []
             for row in rs:
                 if q in row[2]:
