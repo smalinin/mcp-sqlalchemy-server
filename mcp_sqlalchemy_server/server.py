@@ -506,7 +506,7 @@ def podbc_virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, user:Opti
             rs = cursor.execute(cmd, (prompt, _api_key,)).fetchone()
             return rs[0]
     except pyodbc.Error as e:
-        logging.error(f"Error executing query: {e}")
+        logging.error(f"Error executing request")
         raise
 
 
@@ -537,7 +537,7 @@ def podbc_sparql_func(prompt: str, api_key:Optional[str]=None, user:Optional[str
             rs = cursor.execute(cmd, (prompt, _api_key,)).fetchone()
             return rs[0]
     except pyodbc.Error as e:
-        logging.error(f"Error executing query: {e}")
+        logging.error(f"Error executing request")
         raise
 
 
