@@ -73,10 +73,10 @@ Add the following to `claude_desktop_config.json`:
       "command": "uv",
       "args": ["--directory", "/path/to/mcp-sqlalchemy-server", "run", "mcp-sqlalchemy-server"],
       "env": {
-        "ODBC_DSN"="dsn_name",
-        "ODBC_USER="username",
-        "ODBC_PASSWORD="password",
-        "API_KEY"="sk-xxx"
+        "ODBC_DSN": "dsn_name",
+        "ODBC_USER": "username",
+        "ODBC_PASSWORD": "password",
+        "API_KEY": "sk-xxx"
       }
     }
   }
