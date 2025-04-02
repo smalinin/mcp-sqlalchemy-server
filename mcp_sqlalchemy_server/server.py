@@ -507,7 +507,7 @@ def podbc_virtuoso_support_ai(prompt: str, api_key:Optional[str]=None, user:Opti
             return rs[0]
     except pyodbc.Error as e:
         logging.error(f"Error executing request")
-        raise
+        raise pyodbc.Error("Error executing request")
 
 
 @mcp.tool(
@@ -538,7 +538,7 @@ def podbc_sparql_func(prompt: str, api_key:Optional[str]=None, user:Optional[str
             return rs[0]
     except pyodbc.Error as e:
         logging.error(f"Error executing request")
-        raise
+        raise pyodbc.Error("Error executing request")
 
 
 if __name__ == "__main__":
