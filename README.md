@@ -35,7 +35,12 @@ A lightweight MCP (Model Context Protocol) server for ODBC built with **FastAPI*
    brew install uv
    ```
 
-2. **ODBC DSN Setup**: Configure your ODBC Data Source Name (`~/.odbc.ini`) for the target database. Example for Virtuoso DBMS:
+2. **unixODBC Runtime Environment Checks**:
+
+1. Check installation configuration (i.e., location of key INI files) by running: `odbcinst -j`
+2. List available data source names by running: `odbcinst -q -s`
+   
+3. **ODBC DSN Setup**: Configure your ODBC Data Source Name (`~/.odbc.ini`) for the target database. Example for Virtuoso DBMS:
    ```
    [VOS]
    Description = OpenLink Virtuoso
@@ -59,7 +64,14 @@ Clone this repository:
 git clone https://github.com/OpenLinkSoftware/mcp-sqlalchemy-server.git
 cd mcp-sqlalchemy-server
 ```
-
+## Environment Variables 
+Update your `.env`by overriding the defaults to match your preferences
+```
+ODBC_DSN=VOS
+ODBC_USER=dba
+ODBC_PASSWORD=dba
+API_KEY=xxx
+```
 ---
 
 ## Configuration
