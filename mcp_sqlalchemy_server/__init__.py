@@ -14,7 +14,11 @@ from .server import (
     podbc_spasql_query,
     podbc_sparql_query,
     podbc_virtuoso_support_ai,
-    podbc_sparql_func
+    podbc_sparql_func,
+    podbc_sparql_get_entity_types,
+    podbc_sparql_get_entity_types_detailed,
+    podbc_sparql_get_entity_types_samples,
+    podbc_sparql_get_ontologies
 )
 
 # Optionally expose other important items at package level
@@ -29,7 +33,11 @@ __all__ = [
     "podbc_spasql_query",
     "podbc_sparql_query",
     "podbc_virtuoso_support_ai",
-    "podbc_sparql_func"
+    "podbc_sparql_func",
+    "podbc_sparql_get_entity_types",
+    "podbc_sparql_get_entity_types_detailed",
+    "podbc_sparql_get_entity_types_samples",
+    "podbc_sparql_get_ontologies"
 ]
 
 

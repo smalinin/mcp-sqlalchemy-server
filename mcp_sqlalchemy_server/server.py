@@ -542,5 +542,204 @@ def podbc_sparql_func(prompt: str, api_key:Optional[str]=None, user:Optional[str
         raise pyodbc.Error("Error executing request")
 
 
+def _exec_sparql(query: str, format:Optional[str]="json", timeout:Optional[int]= 300000,
+                 user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
+    timeout = 30000
+    format = "json"
+    try:
+        with get_connection(True, user, password, dsn) as conn:
+            cursor = conn.cursor()
+            cmd = f"select Demo.demo.execute_spasql_query('{escape_sql(query)}', ?, ?) as result"
+            rs = cursor.execute(cmd, (format, timeout,)).fetchone()
+            return rs[0]
+    except pyodbc.Error as e:
+        logging.error(f"Error executing query: {e}")
+        raise
+
+
+
+@mcp.tool(
+    name="podbc_sparql_get_entity_types",
+    description="This query retrieves all entity types in the RDF graph, along with their labels and comments if available. "
+                "It filters out blank nodes and ensures that only IRI types are returned. "
+                "The LIMIT clause is set to 100 to restrict the number of entity types returned. "
+)
+def podbc_sparql_get_entity_types(user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
+    """
+    Execute a SPARQL query and return results.
+
+    Args:
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
+
+    Returns:
+        str: Results in requested format as string.
+    """
+
+    query = """
+SELECT DISTINCT * FROM (
+    SPARQL 
+    PREFIX owl: <http://www.w3.org/2002/07/owl#>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> 
+    SELECT ?o 
+    WHERE {
+        GRAPH ?g {
+            ?s a ?o .
+            
+            OPTIONAL {
+                ?s rdfs:label ?label . 
+                FILTER (LANG(?label) = "en" || LANG(?label) = "")
+            }
+            
+            OPTIONAL {
+                ?s rdfs:comment ?comment . 
+                FILTER (LANG(?comment) = "en" || LANG(?comment) = "")
+            }
+            
+            FILTER (isIRI(?o) && !isBlank(?o))
+        }
+    }
+    LIMIT 100
+) AS x 
+    """
+    return podbc_query_database(query, user=user, password=password, dsn=dsn)
+
+
+@mcp.tool(
+    name="podbc_sparql_get_entity_types_detailed",
+    description="This query retrieves all entity types in the RDF graph, along with their labels and comments if available. "
+                "It filters out blank nodes and ensures that only IRI types are returned. "
+                "The LIMIT clause is set to 100 to restrict the number of entity types returned."
+)
+def podbc_sparql_get_entity_types_detailed(user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
+    """
+    Execute a SPARQL query and return results.
+
+    Args:
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
+
+    Returns:
+        str: Results in requested format as string.
+    """
+
+    query = """
+SELECT * FROM (
+    SPARQL
+    PREFIX owl: <http://www.w3.org/2002/07/owl#>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> 
+
+    SELECT ?o, (SAMPLE(?label) AS ?label), (SAMPLE(?comment) AS ?comment)
+    WHERE {
+        GRAPH ?g {
+            ?s a ?o .
+            OPTIONAL {?o rdfs:label ?label . FILTER (LANG(?label) = "en" || LANG(?label) = "")}
+            OPTIONAL {?o rdfs:comment ?comment . FILTER (LANG(?comment) = "en" || LANG(?comment) = "")}
+            FILTER (isIRI(?o) && !isBlank(?o))
+        }
+    }
+    GROUP BY ?o
+    ORDER BY ?o
+    LIMIT 20
+) AS results 
+    """
+    return podbc_query_database(query, user=user, password=password, dsn=dsn)
+
+
+@mcp.tool(
+    name="podbc_sparql_get_entity_types_samples",
+    description="This query retrieves samples of entities for each type in the RDF graph, along with their labels and counts. "
+                "It groups by entity type and orders the results by sample count in descending order. "
+                "Note: The LIMIT clause is set to 20 to restrict the number of entity types returned."
+)
+def podbc_sparql_get_entity_types_samples(user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
+    """
+    Execute a SPARQL query and return results.
+
+    Args:
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
+
+    Returns:
+        str: Results in requested format as string.
+    """
+
+    query = """
+SELECT * FROM (
+    SPARQL
+    PREFIX owl: <http://www.w3.org/2002/07/owl#>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> 
+    SELECT (SAMPLE(?s) AS ?sample), ?slabel, (COUNT(*) AS ?sampleCount), (?o AS ?entityType), ?olabel
+    WHERE {
+        GRAPH ?g {
+            ?s a ?o .
+            OPTIONAL {?s rdfs:label ?slabel . FILTER (LANG(?slabel) = \"en\" || LANG(?slabel) = \"\")}
+            FILTER (isIRI(?s) && !isBlank(?s))
+            OPTIONAL {?o rdfs:label ?olabel . FILTER (LANG(?olabel) = \"en\" || LANG(?olabel) = \"\")}
+            FILTER (isIRI(?o) && !isBlank(?o))
+        }
+    }
+    GROUP BY ?slabel ?o ?olabel
+    ORDER BY DESC(?sampleCount) ?o ?slabel ?olabel
+    LIMIT 20
+) AS results
+    """
+    return podbc_query_database(query, user=user, password=password, dsn=dsn)
+
+
+@mcp.tool(
+    name="podbc_sparql_get_ontologies",
+    description="This query retrieves all ontologies in the RDF graph, along with their labels and comments if available."
+)
+def podbc_sparql_get_ontologies(user:Optional[str]=None, password:Optional[str]=None, dsn:Optional[str]=None) -> str:
+    """
+    Execute a SPARQL query and return results.
+
+    Args:
+        user (Optional[str]=None): Optional username.
+        password (Optional[str]=None): Optional password.
+        dsn (Optional[str]=None): Optional dsn name.
+
+    Returns:
+        str: Results in requested format as string.
+    """
+
+    query = """
+SELECT * FROM (
+    SPARQL 
+    PREFIX owl: <http://www.w3.org/2002/07/owl#>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+    SELECT ?s, ?label, ?comment 
+    WHERE {
+        GRAPH ?g {
+            ?s a owl:Ontology .
+            
+            OPTIONAL {
+                ?s rdfs:label ?label . 
+                FILTER (LANG(?label) = "en" || LANG(?label) = "")
+            }
+            
+            OPTIONAL {
+                ?s rdfs:comment ?comment . 
+                FILTER (LANG(?comment) = "en" || LANG(?comment) = "")
+            }
+            
+            FILTER (isIRI(?o) && !isBlank(?o))
+        }
+    }
+    LIMIT 100
+) AS x
+    """
+    return podbc_query_database(query, user=user, password=password, dsn=dsn)
+
+
+
 if __name__ == "__main__":
     mcp.run()
