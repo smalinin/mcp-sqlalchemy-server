@@ -1,8 +1,8 @@
 ---
 
-# MCP Server ODBC via SQLAlchemy
+# MCP Server ODBC via PyODBC
 
-A lightweight MCP (Model Context Protocol) server for ODBC built with **FastAPI**, **pyodbc**, and **SQLAlchemy**. This server is compatible with Virtuoso DBMS and other DBMS backends that implement a SQLAlchemy provider.
+A lightweight MCP (Model Context Protocol) server for ODBC built with **FastAPI** and **pyodbc**. This server is compatible with Virtuoso DBMS and other DBMS backends that has ODBC driver.
 
 ![mcp-client-and-servers|648x499](https://www.openlinksw.com/data/screenshots/mcp-architecture.png)
 
@@ -37,10 +37,10 @@ A lightweight MCP (Model Context Protocol) server for ODBC built with **FastAPI*
 
 2. **unixODBC Runtime Environment Checks**:
 
-1. Check installation configuration (i.e., location of key INI files) by running: `odbcinst -j`
-2. List available data source names by running: `odbcinst -q -s`
+3. Check installation configuration (i.e., location of key INI files) by running: `odbcinst -j`
+4. List available data source names by running: `odbcinst -q -s`
    
-3. **ODBC DSN Setup**: Configure your ODBC Data Source Name (`~/.odbc.ini`) for the target database. Example for Virtuoso DBMS:
+5. **ODBC DSN Setup**: Configure your ODBC Data Source Name (`~/.odbc.ini`) for the target database. Example for Virtuoso DBMS:
    ```
    [VOS]
    Description = OpenLink Virtuoso
@@ -50,10 +50,6 @@ A lightweight MCP (Model Context Protocol) server for ODBC built with **FastAPI*
    WideAsUTF16 = Yes
    ```
 
-3. **SQLAlchemy URL Binding**: Use the format:
-   ```
-   virtuoso+pyodbc://user:password@VOS
-   ```
 
 ---
 
@@ -96,15 +92,6 @@ Add the following to `claude_desktop_config.json`:
 ```
 ---
 # Usage 
-## Database Management System (DBMS) Connection URLs 
-Here are the pyodbc URL examples for connecting to DBMS systems that have been tested using this mcp-server.
-
-| Database      | URL Format                                    |
-|---------------|-----------------------------------------------|
-| Virtuoso DBMS | `virtuoso+pyodbc://user:password@ODBC_DSN`    |
-| PostgreSQL    | `postgresql://user:password@localhost/dbname` |
-| MySQL         | `mysql+pymysql://user:password@localhost/dbname` |
-| SQLite        | `sqlite:///path/to/database.db`               |
 Once connected, you can interact with your WhatsApp contacts through Claude, leveraging Claude's AI capabilities in your WhatsApp conversations.
 
 ## Tools Provided
@@ -237,4 +224,3 @@ For easier troubleshooting:
    ```
 
 Access the provided URL to troubleshoot server interactions.
-
